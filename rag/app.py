@@ -105,7 +105,7 @@ st.markdown("""
 
 
 @st.cache_resource
-def initialize_rag_system():
+def initialize_rag_system(use_reranking=False):
     """Initialize the RAG system components (cached)"""
     with st.spinner("Initializing RAG system..."):
         # Ensure directories exist
@@ -116,7 +116,9 @@ def initialize_rag_system():
         retriever = ParquetRetriever(
             parquet_files=PARQUET_FILES,
             embedding_generator=embedding_gen,
-            top_k=TOP_K_RESULTS
+            top_k=TOP_K_RESULTS,
+            use_reranking=use_reranking,
+            reranker_model=RERANKER_MODEL
         )
         llm = LLMInterface(
             model_name=LLM_MODEL,
@@ -162,9 +164,23 @@ def main():
         similarity_threshold = st.slider("Similarity Threshold", 0.0, 1.0, SIMILARITY_THRESHOLD, 0.05)
         temperature = st.slider("LLM Temperature", 0.0, 1.0, LLM_TEMPERATURE, 0.1)
 
+    # Re-ranking settings
+    with st.sidebar.expander("🔄 Re-Ranking Settings"):
+        st.markdown("""
+        **Re-ranking** uses a more accurate cross-encoder model to re-score
+        the initially retrieved documents, improving relevance.
+
+        **Note:** Re-ranking is slower but more accurate than initial retrieval.
+        """)
+        use_reranking = st.checkbox(
+            "Enable Re-ranking",
+            value=USE_RERANKING,
+            help="Use cross-encoder model to re-rank retrieved documents for better relevance"
+        )
+
     # Initialize RAG system
     try:
-        retriever, llm = initialize_rag_system()
+        retriever, llm = initialize_rag_system(use_reranking=use_reranking)
     except Exception as e:
         st.error(f"Error initializing RAG system: {e}")
         st.info("Make sure all dependencies are installed:\n\n```\npip install sentence-transformers ollama\n```")
@@ -202,8 +218,11 @@ def main():
         retriever.top_k = top_k
 
         # Retrieve relevant documents
-        with st.spinner("Searching for relevant documents..."):
-            results = retriever.search(query, top_k=top_k)
+        search_msg = "Searching for relevant documents..."
+        if use_reranking:
+            search_msg += " (with re-ranking)"
+        with st.spinner(search_msg):
+            results = retriever.search(query, top_k=top_k, use_reranking=use_reranking)
 
         # Filter by similarity threshold
         results = [r for r in results if r['similarity_score'] >= similarity_threshold]
@@ -213,11 +232,19 @@ def main():
             return
 
         # Display results
-        st.markdown("### 📄 Retrieved Documents")
+        reranked_badge = " 🔄" if use_reranking else ""
+        st.markdown(f"### 📄 Retrieved Documents{reranked_badge}")
+        if use_reranking:
+            st.info("✨ Results have been re-ranked using a cross-encoder model for improved relevance")
 
         for i, result in enumerate(results, 1):
+            # Show if this doc was reranked and had a different original score
+            score_info = f"Similarity: {result['similarity_score']:.3f}"
+            if result.get('reranked') and 'original_score' in result:
+                score_info += f" (Original: {result['original_score']:.3f})"
+
             with st.expander(
-                f"Document {i} - {result['source']} (Similarity: {result['similarity_score']:.3f})",
+                f"Document {i} - {result['source']} ({score_info})",
                 expanded=(i == 1)
             ):
                 st.markdown(f"**Content:**")

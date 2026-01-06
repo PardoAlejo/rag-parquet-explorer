@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional
 import duckdb
 import numpy as np
 from pathlib import Path
+from .reranker import Reranker, NoOpReranker
 
 
 class ParquetRetriever:
@@ -21,7 +22,9 @@ class ParquetRetriever:
         parquet_files: List[Path],
         embedding_generator,
         top_k: int = 5,
-        text_columns: Optional[List[str]] = None
+        text_columns: Optional[List[str]] = None,
+        use_reranking: bool = False,
+        reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     ):
         """
         Initialize the retriever.
@@ -31,6 +34,8 @@ class ParquetRetriever:
             embedding_generator: EmbeddingGenerator instance
             top_k: Number of top results to return
             text_columns: Columns to use for text retrieval (if None, auto-detect)
+            use_reranking: Whether to use re-ranking (default: False)
+            reranker_model: Cross-encoder model to use for re-ranking
         """
         self.parquet_files = [Path(f) for f in parquet_files]
         self.embedding_generator = embedding_generator
@@ -39,6 +44,13 @@ class ParquetRetriever:
         self.conn = duckdb.connect(':memory:')
         self.embeddings_cache = {}
         self.documents = []
+        self.use_reranking = use_reranking
+
+        # Initialize reranker (lazy loading)
+        if use_reranking:
+            self.reranker = Reranker(model_name=reranker_model)
+        else:
+            self.reranker = NoOpReranker()
 
     def load_documents(self, sample_size: Optional[int] = None) -> List[Dict[str, Any]]:
         """
@@ -134,7 +146,8 @@ class ParquetRetriever:
     def search(
         self,
         query: str,
-        top_k: Optional[int] = None
+        top_k: Optional[int] = None,
+        use_reranking: Optional[bool] = None
     ) -> List[Dict[str, Any]]:
         """
         Search for relevant documents using semantic similarity.
@@ -142,6 +155,7 @@ class ParquetRetriever:
         Args:
             query: Search query
             top_k: Number of results to return (uses self.top_k if None)
+            use_reranking: Override the default reranking setting (None = use self.use_reranking)
 
         Returns:
             List of relevant documents with similarity scores
@@ -150,6 +164,7 @@ class ParquetRetriever:
             raise ValueError("Embeddings not built. Call build_embeddings() first.")
 
         k = top_k or self.top_k
+        apply_reranking = use_reranking if use_reranking is not None else self.use_reranking
 
         # Generate query embedding
         query_embedding = self.embedding_generator.generate_embeddings(
@@ -161,8 +176,10 @@ class ParquetRetriever:
         doc_embeddings = self.embeddings_cache['embeddings']
         similarities = self._cosine_similarity(query_embedding[0], doc_embeddings)
 
-        # Get top-k indices
-        top_indices = np.argsort(similarities)[::-1][:k]
+        # Get top-k indices (retrieve more if reranking to allow for better reranking)
+        # Retrieve 2x more documents for reranking to have better candidates
+        retrieve_k = k * 2 if apply_reranking else k
+        top_indices = np.argsort(similarities)[::-1][:retrieve_k]
 
         # Build results
         results = []
@@ -171,6 +188,10 @@ class ParquetRetriever:
             doc['similarity_score'] = float(similarities[idx])
             doc['text'] = self.embeddings_cache['texts'][idx]
             results.append(doc)
+
+        # Apply re-ranking if enabled
+        if apply_reranking and len(results) > 0:
+            results = self.reranker.rerank(query, results, top_k=k)
 
         return results
 

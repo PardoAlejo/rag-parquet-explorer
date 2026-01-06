@@ -33,6 +33,10 @@ LLM_CONTEXT_WINDOW = 4096
 TOP_K_RESULTS = 5
 SIMILARITY_THRESHOLD = 0.7
 
+# Re-ranking configuration
+USE_RERANKING = False  # Enable/disable re-ranking by default
+RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Cross-encoder model for re-ranking
+
 # Vector store configuration
 VECTOR_DB_PATH = CACHE_DIR / "vector_db"
 USE_FAISS = True  # Set to False to use in-memory search
