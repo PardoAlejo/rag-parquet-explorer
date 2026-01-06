@@ -7,6 +7,7 @@ import duckdb
 import numpy as np
 from pathlib import Path
 from .reranker import Reranker, NoOpReranker
+from rag.utils import EmbeddingCache
 
 
 class ParquetRetriever:
@@ -24,7 +25,8 @@ class ParquetRetriever:
         top_k: int = 5,
         text_columns: Optional[List[str]] = None,
         use_reranking: bool = False,
-        reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        cache_dir: Optional[Path] = None
     ):
         """
         Initialize the retriever.
@@ -36,6 +38,7 @@ class ParquetRetriever:
             text_columns: Columns to use for text retrieval (if None, auto-detect)
             use_reranking: Whether to use re-ranking (default: False)
             reranker_model: Cross-encoder model to use for re-ranking
+            cache_dir: Directory for caching embeddings (if None, use default)
         """
         self.parquet_files = [Path(f) for f in parquet_files]
         self.embedding_generator = embedding_generator
@@ -51,6 +54,12 @@ class ParquetRetriever:
             self.reranker = Reranker(model_name=reranker_model)
         else:
             self.reranker = NoOpReranker()
+
+        # Initialize cache system
+        if cache_dir is None:
+            from rag.config import CACHE_DIR
+            cache_dir = CACHE_DIR
+        self.cache = EmbeddingCache(cache_dir)
 
     def load_documents(self, sample_size: Optional[int] = None) -> List[Dict[str, Any]]:
         """
@@ -109,18 +118,25 @@ class ParquetRetriever:
         print(f"Loaded {len(documents)} documents from {len(self.parquet_files)} files")
         return documents
 
-    def build_embeddings(self, text_field: str = None) -> np.ndarray:
+    def build_embeddings(self, text_field: str = None, force_rebuild: bool = False) -> np.ndarray:
         """
-        Build embeddings for all documents.
+        Build embeddings for all documents, using cache when possible.
 
         Args:
             text_field: Specific field to use for embeddings (if None, concatenate all text)
+            force_rebuild: If True, ignore cache and rebuild embeddings
 
         Returns:
             numpy array of embeddings
         """
         if not self.documents:
             raise ValueError("No documents loaded. Call load_documents() first.")
+
+        # Check if we can use cached embeddings
+        if not force_rebuild:
+            cached_data = self._try_load_from_cache()
+            if cached_data:
+                return cached_data['embeddings']
 
         # Extract texts
         texts = []
@@ -141,7 +157,90 @@ class ParquetRetriever:
         self.embeddings_cache['texts'] = texts
         self.embeddings_cache['embeddings'] = embeddings
 
+        # Save to persistent cache
+        self._save_to_cache(embeddings, texts)
+
         return embeddings
+
+    def _try_load_from_cache(self) -> Optional[Dict[str, Any]]:
+        """
+        Try to load embeddings from cache if files haven't changed.
+
+        Returns:
+            Cached data if valid, None otherwise
+        """
+        # Load cache
+        cached_data = self.cache.load_cache()
+        if not cached_data:
+            print("No cache found, will generate embeddings...")
+            return None
+
+        # Get current file metadata
+        current_metadata = {}
+        for pf in self.parquet_files:
+            if pf.exists():
+                current_metadata[str(pf)] = self.cache.get_file_metadata(pf)
+
+        # Check if any files have changed
+        cached_file_metadata = cached_data.get('file_metadata', {})
+        files_changed = []
+
+        for file_path, current_meta in current_metadata.items():
+            cached_meta = cached_file_metadata.get(file_path, {})
+            if self.cache.has_file_changed(Path(file_path), cached_meta):
+                files_changed.append(file_path)
+
+        # Check for new or removed files
+        cached_files = set(cached_file_metadata.keys())
+        current_files = set(current_metadata.keys())
+        new_files = current_files - cached_files
+        removed_files = cached_files - current_files
+
+        if files_changed or new_files or removed_files:
+            if files_changed:
+                print(f"Files changed: {[Path(f).name for f in files_changed]}")
+            if new_files:
+                print(f"New files: {[Path(f).name for f in new_files]}")
+            if removed_files:
+                print(f"Removed files: {[Path(f).name for f in removed_files]}")
+            print("Cache invalidated, will regenerate embeddings...")
+            return None
+
+        # Cache is valid, use it
+        print("✓ Loading embeddings from cache...")
+        self.embeddings_cache['texts'] = cached_data['texts']
+        self.embeddings_cache['embeddings'] = cached_data['embeddings']
+
+        # Verify document count matches
+        if len(cached_data['documents']) != len(self.documents):
+            print("Warning: Document count mismatch, regenerating embeddings...")
+            return None
+
+        print(f"✓ Loaded {len(cached_data['texts'])} embeddings from cache")
+        return cached_data
+
+    def _save_to_cache(self, embeddings: np.ndarray, texts: List[str]) -> None:
+        """
+        Save embeddings to persistent cache.
+
+        Args:
+            embeddings: Document embeddings
+            texts: Document texts
+        """
+        # Get file metadata
+        file_metadata = {}
+        for pf in self.parquet_files:
+            if pf.exists():
+                file_metadata[str(pf)] = self.cache.get_file_metadata(pf)
+
+        # Save cache
+        self.cache.save_cache(embeddings, texts, self.documents, file_metadata)
+
+    def clear_cache(self) -> None:
+        """Clear the embedding cache."""
+        self.cache.clear_cache()
+        self.embeddings_cache = {}
+        print("✓ Cache cleared successfully")
 
     def search(
         self,

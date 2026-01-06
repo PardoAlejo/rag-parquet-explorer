@@ -194,6 +194,32 @@ def main():
             else:
                 st.error("✗ Ollama not available or model not found")
 
+    # Cache management
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🗂️ Cache Management")
+
+    # Display cache info
+    cache_info = retriever.cache.get_cache_info()
+    if cache_info['exists']:
+        st.sidebar.success(f"✓ Cache exists ({cache_info['size_mb']:.2f} MB)")
+    else:
+        st.sidebar.info("No cache found")
+
+    # Manual recalculation button
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        if st.button("🔄 Rebuild Cache", help="Force recalculation of all embeddings"):
+            with st.spinner("Rebuilding embeddings..."):
+                retriever.build_embeddings(force_rebuild=True)
+            st.success("✓ Embeddings rebuilt!")
+            st.rerun()
+
+    with col2:
+        if st.button("🗑️ Clear Cache", help="Remove cached embeddings"):
+            retriever.clear_cache()
+            st.success("✓ Cache cleared!")
+            st.rerun()
+
     # Main content
     st.markdown("---")
 
@@ -297,6 +323,13 @@ def main():
         - Use the **Top K Results** slider to control how many documents are retrieved
         - Adjust **Similarity Threshold** to filter out low-relevance results
         - Modify **LLM Temperature** for more creative (higher) or focused (lower) responses
+
+        **Cache Management:**
+
+        - Embeddings are automatically cached to speed up subsequent launches
+        - Cache is invalidated when files change (detected by file hash)
+        - Use **🔄 Rebuild Cache** to force recalculation of embeddings
+        - Use **🗑️ Clear Cache** to remove cached data
 
         **Requirements:**
 
