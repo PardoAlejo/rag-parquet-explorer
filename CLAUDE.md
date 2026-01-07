@@ -70,21 +70,31 @@ python -m py_compile rag/app.py
 ```
 User Query → EmbeddingGenerator (text → 384-dim vector)
            → ParquetRetriever (cosine similarity search)
+           → Threshold Filter (on cosine scores)
+           → [Optional] Reranker (cross-encoder re-scoring)
            → Top-K Documents Retrieved
            → Context Builder (format for LLM)
            → LLMInterface (Ollama)
            → Generated Answer
+
+First Run:  Parquet → DuckDB → Documents → Embeddings → Cache to disk
+Next Runs:  Cache → Load embeddings (90x faster)
 ```
 
 ### Component Dependencies
 
 - **`rag/app.py`**: Streamlit UI that orchestrates all components
 - **`rag/config.py`**: Single source of truth for all configuration
-- **`rag/embeddings/generator.py`**: Wraps sentence-transformers models
+- **`rag/embeddings/generator.py`**: Wraps sentence-transformers models (bi-encoder)
 - **`rag/retrieval/retriever.py`**: Loads Parquet files, builds embeddings, performs search
+- **`rag/retrieval/reranker.py`**: Cross-encoder re-ranking for improved relevance (NEW)
+- **`rag/utils/cache.py`**: Persistent embedding cache with file change detection (NEW)
 - **`rag/llm/model.py`**: Interfaces with Ollama for text generation
 
-**Key Relationship**: `ParquetRetriever` depends on `EmbeddingGenerator` (injected) to embed both documents and queries.
+**Key Relationships**:
+- `ParquetRetriever` depends on `EmbeddingGenerator` (bi-encoder) for initial retrieval
+- `ParquetRetriever` optionally uses `Reranker` (cross-encoder) for improved ordering
+- `ParquetRetriever` uses `EmbeddingCache` for persistent storage
 
 ### Critical Design Patterns
 
@@ -110,13 +120,18 @@ Parquet Files → DuckDB (zero-copy scan)
 | Setting | Purpose | Impact |
 |---------|---------|--------|
 | `PARQUET_FILES` | List of data files to index | Add/remove Parquet files here |
-| `EMBEDDING_MODEL` | HuggingFace model name | Controls search quality (default: 384-dim) |
+| `EMBEDDING_MODEL` | HuggingFace bi-encoder model | Controls search quality (default: 384-dim) |
 | `LLM_MODEL` | Ollama model name | Which LLM to use (default: llama3.2) |
 | `TOP_K_RESULTS` | Number of docs to retrieve | Higher = more context, slower |
-| `SIMILARITY_THRESHOLD` | Min similarity score | Higher = stricter matching |
+| `SIMILARITY_THRESHOLD` | Min cosine similarity | Higher = stricter matching (0-1 range) |
 | `LLM_TEMPERATURE` | Response creativity | 0 = focused, 1 = creative |
+| `USE_RERANKING` | Enable cross-encoder re-ranking | Better relevance, ~2x slower |
+| `RERANKER_MODEL` | Cross-encoder model name | Default: ms-marco-MiniLM-L-6-v2 |
 
-**Important**: After changing `PARQUET_FILES` or `EMBEDDING_MODEL`, embeddings must be rebuilt (clear cache and restart app).
+**Important**:
+- After changing `PARQUET_FILES` or `EMBEDDING_MODEL`, clear cache and restart app
+- `SIMILARITY_THRESHOLD` applies to **cosine similarity** (0-1), NOT cross-encoder scores
+- Cache directory: `.cache/` (auto-created, stores embeddings + metadata)
 
 ## Testing Philosophy
 
@@ -347,11 +362,67 @@ ollama pull llama3.2
 python -c "from rag.llm import LLMInterface; llm = LLMInterface(); print(llm.check_availability())"
 ```
 
-## Documentation
+## Recent Features & Fixes
 
-- **START_HERE.md**: Quick start guide for new users
+### New Features (Jan 2026)
+
+1. **Re-ranking System** (`rag/retrieval/reranker.py`)
+   - Uses cross-encoder model for improved document relevance
+   - Configurable via `USE_RERANKING` in config.py
+   - See `docs/features/FEATURE_SUMMARY.md` for details
+   - **Known Issue FIXED**: See `docs/fixes/reranker-threshold.md`
+
+2. **Embedding Cache System** (`rag/utils/cache.py`)
+   - Persistent caching to avoid recomputing embeddings
+   - 90x speedup for app restarts (90s → <1s)
+   - See `docs/features/FEATURE_SUMMARY.md` for details
+   - **Known Issue FIXED**: See `docs/fixes/cache-invalidation.md`
+
+3. **UI Dark Mode Support**
+   - Purple gradient answer box visible in all themes
+   - See `docs/fixes/ui-dark-mode.md` for CSS details
+
+### Critical Bugs Fixed
+
+**IMPORTANT: Read these before debugging related issues**
+
+1. **Re-ranker Threshold Bug** (CRITICAL - would return 0 results)
+   - **Problem**: Cross-encoder scores (-10 to +10) filtered by cosine threshold (0-1)
+   - **Symptom**: Re-ranking enabled + any threshold = no results
+   - **Fix**: Apply threshold BEFORE re-ranking, preserve both scores
+   - **Details**: `docs/fixes/reranker-threshold.md`
+
+2. **Cache Invalidation Bug** (HIGH - defeated caching purpose)
+   - **Problem**: mtime changes (git, backups) triggered unnecessary rebuilds
+   - **Symptom**: Cache rebuilt every app restart despite no file changes
+   - **Fix**: Only hash-verify when mtime changes but size is same
+   - **Details**: `docs/fixes/cache-invalidation.md`
+
+3. **UI Dark Mode Bug** (MEDIUM - visibility issue)
+   - **Problem**: Light green background invisible in dark theme
+   - **Symptom**: Answer box barely visible
+   - **Fix**: Purple gradient with white text works in all themes
+   - **Details**: `docs/fixes/ui-dark-mode.md`
+
+## Documentation Structure
+
+### User-Facing Docs (Root)
+- **README.md**: Main project overview
+- **START_HERE.md**: Quick start guide (5 minute setup)
 - **EXAMPLES.md**: Detailed usage examples and workflows
+- **QUICK_REFERENCE.md**: Command cheat sheet
+- **CLAUDE.md**: This file - for Claude Code instances
+
+### Technical Docs (docs/)
 - **docs/ARCHITECTURE.md**: System architecture deep dive
 - **docs/TESTING.md**: Comprehensive testing guide
 - **docs/SETUP.md**: Installation and setup instructions
-- **tests/README.md**: Quick testing reference
+- **docs/TEST_SUMMARY.md**: Test coverage summary
+
+### Feature Documentation (docs/features/)
+- **docs/features/FEATURE_SUMMARY.md**: Re-ranker and cache features
+
+### Fix Documentation (docs/fixes/)
+- **docs/fixes/reranker-threshold.md**: Re-ranker threshold bug and fix
+- **docs/fixes/cache-invalidation.md**: Cache invalidation bug and fix
+- **docs/fixes/ui-dark-mode.md**: Dark mode visibility fix
