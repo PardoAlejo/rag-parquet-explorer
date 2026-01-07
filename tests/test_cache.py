@@ -120,26 +120,41 @@ class TestEmbeddingCache:
         assert cache.has_file_changed(temp_parquet_file, metadata1)
 
     def test_has_file_changed_mtime_change(self, cache, temp_parquet_file):
-        """Test file change detection when modification time changes"""
+        """Test file change detection when modification time changes but content doesn't"""
+        # Write specific content
+        temp_parquet_file.write_text("test content")
         metadata1 = cache.get_file_metadata(temp_parquet_file)
 
-        # Wait a bit and touch the file
+        # Wait a bit and touch the file (changes mtime but not content)
         time.sleep(0.01)
         temp_parquet_file.touch()
 
-        # Size is same but mtime changed
-        assert cache.has_file_changed(temp_parquet_file, metadata1)
+        # Size and content are same, only mtime changed
+        # Should NOT be detected as changed (hash will verify content is same)
+        assert not cache.has_file_changed(temp_parquet_file, metadata1)
 
     def test_has_file_changed_content_change(self, cache, temp_parquet_file):
-        """Test file change detection when content changes"""
+        """Test file change detection when content changes with same size"""
         # Write initial content
         temp_parquet_file.write_text("a" * 100)
         metadata1 = cache.get_file_metadata(temp_parquet_file)
 
-        # Write different content with same size
+        # Write different content with same size (edge case)
         temp_parquet_file.write_text("b" * 100)
 
-        # Hash should detect the change
+        # Hash should detect the change even though size is same
+        assert cache.has_file_changed(temp_parquet_file, metadata1)
+
+    def test_has_file_changed_mtime_and_content_change(self, cache, temp_parquet_file):
+        """Test file change detection when both mtime and content change"""
+        temp_parquet_file.write_text("original content")
+        metadata1 = cache.get_file_metadata(temp_parquet_file)
+
+        # Wait and change content (mtime and hash both change)
+        time.sleep(0.01)
+        temp_parquet_file.write_text("modified content")
+
+        # Should be detected as changed
         assert cache.has_file_changed(temp_parquet_file, metadata1)
 
     def test_has_file_not_changed(self, cache, temp_parquet_file):

@@ -85,13 +85,18 @@ class EmbeddingCache:
 
         current_metadata = self.get_file_metadata(file_path)
 
-        # Quick check: size or mtime changed
-        if (current_metadata.get('size') != cached_metadata.get('size') or
-            current_metadata.get('mtime') != cached_metadata.get('mtime')):
+        # Quick check: size changed (definitely changed)
+        if current_metadata.get('size') != cached_metadata.get('size'):
             return True
 
-        # Thorough check: hash changed
-        return current_metadata.get('hash') != cached_metadata.get('hash')
+        # If mtime changed but size is the same, check hash to be sure
+        # (mtime can change from git operations, backups, etc. without content changing)
+        if current_metadata.get('mtime') != cached_metadata.get('mtime'):
+            # Hash check (slower but accurate)
+            return current_metadata.get('hash') != cached_metadata.get('hash')
+
+        # Size and mtime unchanged - assume file hasn't changed (optimization)
+        return False
 
     def load_cache(self) -> Optional[Dict[str, Any]]:
         """

@@ -175,6 +175,14 @@ class ParquetRetriever:
             print("No cache found, will generate embeddings...")
             return None
 
+        # Check for test cache pollution
+        cached_file_metadata = cached_data.get('file_metadata', {})
+        for cached_path in cached_file_metadata.keys():
+            if '/tmp/' in cached_path or '/pytest-' in cached_path or 'test.parquet' in cached_path:
+                print("⚠️  Detected test cache - clearing and regenerating...")
+                self.cache.clear_cache()
+                return None
+
         # Get current file metadata
         current_metadata = {}
         for pf in self.parquet_files:
@@ -196,14 +204,39 @@ class ParquetRetriever:
         new_files = current_files - cached_files
         removed_files = cached_files - current_files
 
+        # Debug: Show detailed comparison
         if files_changed or new_files or removed_files:
+            print("=" * 60)
+            print("⚠️  Cache invalidation triggered:")
             if files_changed:
-                print(f"Files changed: {[Path(f).name for f in files_changed]}")
+                print(f"\n📝 Files changed ({len(files_changed)}):")
+                for f in files_changed:
+                    print(f"  - {Path(f).name}")
+                    # Show what changed
+                    cached_meta = cached_file_metadata.get(f, {})
+                    current_meta = current_metadata.get(f, {})
+                    if cached_meta.get('size') != current_meta.get('size'):
+                        print(f"    Size: {cached_meta.get('size')} → {current_meta.get('size')}")
+                    if cached_meta.get('mtime') != current_meta.get('mtime'):
+                        print(f"    Modified time changed")
+                    if cached_meta.get('hash') != current_meta.get('hash'):
+                        print(f"    Content hash changed")
+
             if new_files:
-                print(f"New files: {[Path(f).name for f in new_files]}")
+                print(f"\n✨ New files ({len(new_files)}):")
+                for f in new_files:
+                    print(f"  + {Path(f).name}")
+
             if removed_files:
-                print(f"Removed files: {[Path(f).name for f in removed_files]}")
-            print("Cache invalidated, will regenerate embeddings...")
+                print(f"\n🗑️  Removed files ({len(removed_files)}):")
+                for f in removed_files:
+                    print(f"  - {Path(f).name}")
+                    # Check if this is a test file (temp path)
+                    if '/tmp/' in f or '/pytest-' in f or 'test.parquet' in f:
+                        print(f"    ⚠️  This looks like a test file - cache may be corrupted")
+
+            print("\n→ Cache invalidated, will regenerate embeddings...")
+            print("=" * 60)
             return None
 
         # Cache is valid, use it
