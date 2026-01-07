@@ -367,8 +367,17 @@ def main():
             else:
                 score_info = f"Score: {result.get('similarity_score', 0):.3f}"
 
+            # Try to get title from content or metadata
+            doc_title = (
+                result.get('content', {}).get('title') or
+                result.get('content', {}).get('title_trans') or
+                result.get('metadata', {}).get('title') or
+                result.get('metadata', {}).get('title_trans') or
+                result.get('source', 'Unknown')
+            )
+
             with st.expander(
-                f"Document {i} - {result['source']} ({score_info})",
+                f"Document {i}: {doc_title} ({score_info})",
                 expanded=False
             ):
                 st.markdown(f"**Content:**")

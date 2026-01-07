@@ -32,7 +32,7 @@ LLM_CONTEXT_WINDOW = 4096
 # Retrieval configuration
 RETRIEVAL_POOL_SIZE = 50  # Number of documents to retrieve initially (before ranking)
 TOP_K_RESULTS = 5  # Number of top documents to show and use for LLM
-SIMILARITY_THRESHOLD = 0.7
+SIMILARITY_THRESHOLD = 0.5
 
 # Re-ranking configuration
 USE_RERANKING = False  # Enable/disable re-ranking by default
