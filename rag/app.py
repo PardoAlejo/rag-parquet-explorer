@@ -263,8 +263,18 @@ def main():
         st.session_state.results_cache
     )
 
-    # Process query (button clicked) or show cached results (toggle switched)
-    if ((search_button or search_and_answer) and query.strip()) or has_cached_results:
+    # Auto-trigger re-search if pool_size or threshold changed (but same query text)
+    previous_cache_key = st.session_state.current_query
+    auto_rerun = False
+    if previous_cache_key and previous_cache_key != cache_key and query.strip():
+        # Extract previous query text (before first |)
+        prev_query = previous_cache_key.split('|')[0] if '|' in previous_cache_key else previous_cache_key
+        if prev_query == query:
+            # Same query, but pool_size or threshold changed - auto re-run
+            auto_rerun = True
+
+    # Process query (button clicked OR cached results OR auto-rerun)
+    if ((search_button or search_and_answer) and query.strip()) or has_cached_results or auto_rerun:
         # Update retriever settings
         retriever.top_k = top_k
 
@@ -274,6 +284,10 @@ def main():
         if query_changed:
             st.session_state.current_query = cache_key
             st.session_state.results_cache = {}  # Clear old results
+
+            # Show info message if auto-rerun triggered
+            if auto_rerun:
+                st.info(f"🔄 Pool size or threshold changed - retrieving new pool of {pool_size} documents...")
 
             # Retrieve initial pool of documents (without re-ranking)
             with st.spinner(f"Retrieving pool of {pool_size} documents..."):
