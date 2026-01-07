@@ -372,13 +372,20 @@ python -c "from rag.llm import LLMInterface; llm = LLMInterface(); print(llm.che
    - See `docs/features/FEATURE_SUMMARY.md` for details
    - **Known Issue FIXED**: See `docs/fixes/reranker-threshold.md`
 
-2. **Embedding Cache System** (`rag/utils/cache.py`)
+2. **Instant Re-ranking Toggle** (NEW - Jan 7, 2026)
+   - Smart caching allows instant switching between original and re-ranked results
+   - Toggle feels instant (<100ms) vs old reload (2-5s)
+   - Pre-computes both versions for seamless comparison
+   - See `docs/features/instant-reranking-toggle.md` for details
+   - **UX improvement**: 20-50x faster toggle operations
+
+3. **Embedding Cache System** (`rag/utils/cache.py`)
    - Persistent caching to avoid recomputing embeddings
    - 90x speedup for app restarts (90s → <1s)
    - See `docs/features/FEATURE_SUMMARY.md` for details
    - **Known Issue FIXED**: See `docs/fixes/cache-invalidation.md`
 
-3. **UI Dark Mode Support**
+4. **UI Dark Mode Support**
    - Purple gradient answer box visible in all themes
    - See `docs/fixes/ui-dark-mode.md` for CSS details
 

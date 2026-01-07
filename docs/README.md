@@ -60,6 +60,7 @@ Check **fixes/** directory for known issues:
 | File | Purpose |
 |------|---------|
 | **features/FEATURE_SUMMARY.md** | Overview of re-ranking and caching features, usage, performance |
+| **features/instant-reranking-toggle.md** | Smart toggle for instant switching between original and re-ranked results |
 
 ### Fix Documentation
 
