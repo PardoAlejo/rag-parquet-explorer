@@ -371,6 +371,7 @@ python -c "from rag.llm import LLMInterface; llm = LLMInterface(); print(llm.che
    - Configurable via `USE_RERANKING` in config.py
    - See `docs/features/FEATURE_SUMMARY.md` for details
    - **Known Issue FIXED**: See `docs/fixes/reranker-threshold.md`
+   - ⚠️ **Effectiveness Note**: Current model not effective on Spanish/French data (see below)
 
 2. **Instant Re-ranking Toggle** (NEW - Jan 7, 2026)
    - Smart caching allows instant switching between original and re-ranked results
@@ -385,8 +386,17 @@ python -c "from rag.llm import LLMInterface; llm = LLMInterface(); print(llm.che
    - See `docs/features/FEATURE_SUMMARY.md` for details
    - **Known Issue FIXED**: See `docs/fixes/cache-invalidation.md`
 
-4. **UI Dark Mode Support**
-   - Purple gradient answer box visible in all themes
+4. **Retrieval Pool System** (NEW - Jan 7, 2026)
+   - Retrieve large pool (50-100 docs) → Rank all → Show/use top-k
+   - Makes re-ranking more effective by giving it more candidates
+   - User-adjustable pool size (10-100) and top-k (1-20) in UI
+   - Smart caching: pool size/threshold change triggers re-search
+   - See `docs/features/retrieval-pool-system.md` for architecture
+
+5. **UI Improvements** (NEW - Jan 7, 2026)
+   - Lower default similarity threshold (0.7 → 0.5) for more permissive retrieval
+   - Document titles shown in expanders (from 'title' field) instead of filenames
+   - Dark mode support with purple gradient answer box
    - See `docs/fixes/ui-dark-mode.md` for CSS details
 
 ### Critical Bugs Fixed
@@ -411,6 +421,87 @@ python -c "from rag.llm import LLMInterface; llm = LLMInterface(); print(llm.che
    - **Fix**: Purple gradient with white text works in all themes
    - **Details**: `docs/fixes/ui-dark-mode.md`
 
+### Known Limitations
+
+**Re-ranking Effectiveness (Jan 7, 2026)**
+
+⚠️ **Current Status**: Re-ranking is NOT effective for Spanish/French news data
+
+**Test Results:**
+- Tested on 151,224 Spanish/French news articles
+- 4 diverse queries with pool size of 50 documents
+- Result: **0% document reordering** (exact same order as cosine similarity)
+- Verdict: Re-ranking adds 2-5s latency with zero benefit
+
+**Root Cause:**
+- Cross-encoder model (`ms-marco-MiniLM-L-6-v2`) trained on English Q&A
+- Dataset mismatch: Spanish/French news vs English questions
+- Embedding model (`all-MiniLM-L6-v2`) already very effective
+
+**What We Keep:**
+- ✅ Feature fully implemented and tested
+- ✅ UI toggle and pool system working correctly
+- ✅ Ready for improvement with better model
+- ✅ Documented for future reference
+
+**See:** `docs/features/reranking-effectiveness.md` for full analysis
+
+**Test Script:**
+```bash
+python test_reranking_effectiveness.py
+```
+
+## Future Enhancements
+
+### Near-Term Improvements
+
+**1. Multilingual Cross-Encoder** (RECOMMENDED NEXT)
+- **Priority**: HIGH
+- **Effort**: 30 minutes
+- **Model**: `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`
+- **Why**: Trained on multilingual data (100+ languages including Spanish/French)
+- **Expected**: 20-40% document reordering vs current 0%
+- **Action**: Change `RERANKER_MODEL` in `rag/config.py` and re-test
+
+### Long-Term Vision
+
+**2. Graph-Based Retrieval** 🔮
+- **Priority**: FUTURE (major feature)
+- **Effort**: Weeks/months
+- **Impact**: Transformative for complex queries
+
+**Concept:**
+- Build knowledge graph from document entities and relationships
+- Combine vector similarity with graph connectivity
+- Multi-hop reasoning for complex questions
+- Better citation and reference tracking
+
+**Potential Approaches:**
+- Entity linking + graph traversal (e.g., "How is X related to Y?")
+- Document-level graph with semantic edges
+- Hybrid: Vector retrieval → Graph expansion → Re-ranking
+
+**Technologies to Explore:**
+- LlamaIndex (graph-based RAG)
+- LangGraph (workflow graphs)
+- Neo4j + vector search
+- NetworkX for custom algorithms
+
+**Success Metrics:**
+- Better multi-document query handling
+- Improved reference tracking
+- More comprehensive answers requiring multiple sources
+
+**3. Domain-Specific Fine-Tuning**
+- Fine-tune cross-encoder on Spanish/French news Q&A pairs
+- Create training dataset from actual queries and relevance judgments
+- Expected: >50% improvement in ranking quality
+
+**4. Hybrid Retrieval**
+- Combine dense (embeddings) + sparse (BM25) + graph
+- Reciprocal Rank Fusion (RRF) for merging
+- Better coverage across query types
+
 ## Documentation Structure
 
 ### User-Facing Docs (Root)
@@ -427,7 +518,10 @@ python -c "from rag.llm import LLMInterface; llm = LLMInterface(); print(llm.che
 - **docs/TEST_SUMMARY.md**: Test coverage summary
 
 ### Feature Documentation (docs/features/)
-- **docs/features/FEATURE_SUMMARY.md**: Re-ranker and cache features
+- **docs/features/FEATURE_SUMMARY.md**: Re-ranker and cache features overview
+- **docs/features/instant-reranking-toggle.md**: Smart toggle implementation
+- **docs/features/retrieval-pool-system.md**: Pool-based retrieval architecture
+- **docs/features/reranking-effectiveness.md**: ⚠️ Effectiveness analysis and recommendations
 
 ### Fix Documentation (docs/fixes/)
 - **docs/fixes/reranker-threshold.md**: Re-ranker threshold bug and fix
