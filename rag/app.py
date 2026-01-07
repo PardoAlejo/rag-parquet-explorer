@@ -105,7 +105,7 @@ st.markdown("""
 
 
 @st.cache_resource
-def initialize_rag_system(use_reranking=False):
+def initialize_rag_system():
     """Initialize the RAG system components (cached)"""
     with st.spinner("Initializing RAG system..."):
         # Ensure directories exist
@@ -117,7 +117,7 @@ def initialize_rag_system(use_reranking=False):
             parquet_files=PARQUET_FILES,
             embedding_generator=embedding_gen,
             top_k=TOP_K_RESULTS,
-            use_reranking=use_reranking,
+            use_reranking=False,  # Always False - we'll apply re-ranking dynamically
             reranker_model=RERANKER_MODEL
         )
         llm = LLMInterface(
@@ -164,23 +164,29 @@ def main():
         similarity_threshold = st.slider("Similarity Threshold", 0.0, 1.0, SIMILARITY_THRESHOLD, 0.05)
         temperature = st.slider("LLM Temperature", 0.0, 1.0, LLM_TEMPERATURE, 0.1)
 
-    # Re-ranking settings
-    with st.sidebar.expander("🔄 Re-Ranking Settings"):
-        st.markdown("""
-        **Re-ranking** uses a more accurate cross-encoder model to re-score
-        the initially retrieved documents, improving relevance.
+    # Initialize session state for results caching
+    if 'results_cache' not in st.session_state:
+        st.session_state.results_cache = {}
+    if 'current_query' not in st.session_state:
+        st.session_state.current_query = ""
 
-        **Note:** Re-ranking is slower but more accurate than initial retrieval.
-        """)
-        use_reranking = st.checkbox(
-            "Enable Re-ranking",
-            value=USE_RERANKING,
-            help="Use cross-encoder model to re-rank retrieved documents for better relevance"
-        )
+    # Re-ranking toggle (no expander, visible toggle)
+    st.sidebar.markdown("### 🔄 Re-Ranking")
+    use_reranking = st.sidebar.toggle(
+        "Enable Re-ranking",
+        value=USE_RERANKING,
+        help="Toggle between original and re-ranked results (instant switch, no recomputation)",
+        key="reranking_toggle"
+    )
+
+    if use_reranking:
+        st.sidebar.info("✨ Showing re-ranked results (cross-encoder scores)")
+    else:
+        st.sidebar.info("📊 Showing original results (cosine similarity)")
 
     # Initialize RAG system
     try:
-        retriever, llm = initialize_rag_system(use_reranking=use_reranking)
+        retriever, llm = initialize_rag_system()
     except Exception as e:
         st.error(f"Error initializing RAG system: {e}")
         st.info("Make sure all dependencies are installed:\n\n```\npip install sentence-transformers ollama\n```")
@@ -238,22 +244,62 @@ def main():
     with col2:
         search_and_answer = st.button("🤖 Search & Answer", type="primary", use_container_width=True)
 
-    # Process query
-    if (search_button or search_and_answer) and query.strip():
+    # Check if we should show results (button clicked OR just toggling with existing results)
+    cache_key = f"{query}|{top_k}|{similarity_threshold}"
+    has_cached_results = (
+        st.session_state.current_query == cache_key and
+        st.session_state.results_cache
+    )
+
+    # Process query (button clicked) or show cached results (toggle switched)
+    if ((search_button or search_and_answer) and query.strip()) or has_cached_results:
         # Update retriever settings
         retriever.top_k = top_k
 
-        # Retrieve relevant documents
-        search_msg = "Searching for relevant documents..."
+        # Check if we need to recompute (query changed or no cache)
+        query_changed = cache_key != st.session_state.current_query
+
+        if query_changed:
+            st.session_state.current_query = cache_key
+            st.session_state.results_cache = {}  # Clear old results
+
+            # Retrieve documents (without re-ranking first)
+            with st.spinner("Searching for relevant documents..."):
+                results_original = retriever.search(
+                    query,
+                    top_k=top_k,
+                    use_reranking=False,
+                    min_similarity=similarity_threshold
+                )
+
+            if not results_original:
+                st.warning("No relevant documents found. Try lowering the similarity threshold.")
+                return
+
+            # Cache original results
+            st.session_state.results_cache['original'] = results_original
+
+            # Compute re-ranked results if toggle is on OR pre-compute for instant switching
+            with st.spinner("Computing re-ranked results..."):
+                results_reranked = retriever.search(
+                    query,
+                    top_k=top_k,
+                    use_reranking=True,
+                    min_similarity=similarity_threshold
+                )
+
+            # Cache re-ranked results
+            st.session_state.results_cache['reranked'] = results_reranked
+
+        # Get appropriate results based on toggle (instant switch!)
         if use_reranking:
-            search_msg += " (with re-ranking)"
-        with st.spinner(search_msg):
-            results = retriever.search(
-                query,
-                top_k=top_k,
-                use_reranking=use_reranking,
-                min_similarity=similarity_threshold  # Apply threshold before re-ranking
-            )
+            results = st.session_state.results_cache.get('reranked', [])
+            if not query_changed and has_cached_results:
+                st.success("⚡ Switched to re-ranked results instantly (no recomputation needed!)")
+        else:
+            results = st.session_state.results_cache.get('original', [])
+            if not query_changed and has_cached_results:
+                st.success("⚡ Switched to original results instantly (no recomputation needed!)")
 
         if not results:
             st.warning("No relevant documents found. Try lowering the similarity threshold.")
