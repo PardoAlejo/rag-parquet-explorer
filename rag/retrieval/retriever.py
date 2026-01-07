@@ -246,7 +246,8 @@ class ParquetRetriever:
         self,
         query: str,
         top_k: Optional[int] = None,
-        use_reranking: Optional[bool] = None
+        use_reranking: Optional[bool] = None,
+        min_similarity: float = 0.0
     ) -> List[Dict[str, Any]]:
         """
         Search for relevant documents using semantic similarity.
@@ -255,6 +256,7 @@ class ParquetRetriever:
             query: Search query
             top_k: Number of results to return (uses self.top_k if None)
             use_reranking: Override the default reranking setting (None = use self.use_reranking)
+            min_similarity: Minimum cosine similarity threshold (applied before re-ranking)
 
         Returns:
             List of relevant documents with similarity scores
@@ -275,20 +277,38 @@ class ParquetRetriever:
         doc_embeddings = self.embeddings_cache['embeddings']
         similarities = self._cosine_similarity(query_embedding[0], doc_embeddings)
 
-        # Get top-k indices (retrieve more if reranking to allow for better reranking)
-        # Retrieve 2x more documents for reranking to have better candidates
-        retrieve_k = k * 2 if apply_reranking else k
-        top_indices = np.argsort(similarities)[::-1][:retrieve_k]
+        # Filter by minimum similarity threshold BEFORE re-ranking
+        # This is important because cross-encoder scores are on a different scale
+        if min_similarity > 0:
+            # Get indices where similarity meets threshold
+            valid_indices = np.where(similarities >= min_similarity)[0]
+            if len(valid_indices) == 0:
+                return []  # No documents meet the threshold
 
-        # Build results
+            # Filter similarities and sort
+            valid_similarities = similarities[valid_indices]
+            sorted_positions = np.argsort(valid_similarities)[::-1]
+
+            # Get top-k from valid documents
+            retrieve_k = k * 2 if apply_reranking else k
+            top_positions = sorted_positions[:min(retrieve_k, len(sorted_positions))]
+            top_indices = valid_indices[top_positions]
+        else:
+            # No threshold, use original logic
+            retrieve_k = k * 2 if apply_reranking else k
+            top_indices = np.argsort(similarities)[::-1][:retrieve_k]
+
+        # Build results with original cosine similarity scores
         results = []
         for idx in top_indices:
             doc = self.documents[idx].copy()
             doc['similarity_score'] = float(similarities[idx])
+            doc['cosine_similarity'] = float(similarities[idx])  # Preserve original score
             doc['text'] = self.embeddings_cache['texts'][idx]
             results.append(doc)
 
         # Apply re-ranking if enabled
+        # Re-ranker will update similarity_score but cosine_similarity is preserved
         if apply_reranking and len(results) > 0:
             results = self.reranker.rerank(query, results, top_k=k)
 

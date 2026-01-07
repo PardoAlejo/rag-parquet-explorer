@@ -248,10 +248,12 @@ def main():
         if use_reranking:
             search_msg += " (with re-ranking)"
         with st.spinner(search_msg):
-            results = retriever.search(query, top_k=top_k, use_reranking=use_reranking)
-
-        # Filter by similarity threshold
-        results = [r for r in results if r['similarity_score'] >= similarity_threshold]
+            results = retriever.search(
+                query,
+                top_k=top_k,
+                use_reranking=use_reranking,
+                min_similarity=similarity_threshold  # Apply threshold before re-ranking
+            )
 
         if not results:
             st.warning("No relevant documents found. Try lowering the similarity threshold.")
@@ -264,10 +266,15 @@ def main():
             st.info("✨ Results have been re-ranked using a cross-encoder model for improved relevance")
 
         for i, result in enumerate(results, 1):
-            # Show if this doc was reranked and had a different original score
-            score_info = f"Similarity: {result['similarity_score']:.3f}"
-            if result.get('reranked') and 'original_score' in result:
-                score_info += f" (Original: {result['original_score']:.3f})"
+            # Show scores with proper labels for re-ranked vs non-reranked
+            if result.get('reranked'):
+                # Re-ranked: show cross-encoder score and original cosine similarity
+                score_info = f"Re-rank Score: {result['similarity_score']:.3f}"
+                if 'cosine_similarity' in result:
+                    score_info += f" | Cosine: {result['cosine_similarity']:.3f}"
+            else:
+                # Not re-ranked: just show cosine similarity
+                score_info = f"Cosine Similarity: {result['similarity_score']:.3f}"
 
             with st.expander(
                 f"Document {i} - {result['source']} ({score_info})",
@@ -275,6 +282,13 @@ def main():
             ):
                 st.markdown(f"**Content:**")
                 st.markdown(f"```\n{result['text']}\n```")
+
+                # Show score details
+                if result.get('reranked'):
+                    st.markdown("**Scores:**")
+                    st.markdown(f"- 🔄 **Re-rank Score:** {result['similarity_score']:.4f} (cross-encoder)")
+                    if 'cosine_similarity' in result:
+                        st.markdown(f"- 📊 **Cosine Similarity:** {result['cosine_similarity']:.4f} (bi-encoder)")
 
                 if result['metadata']:
                     st.markdown("**Metadata:**")
