@@ -291,9 +291,35 @@ def main():
             # Cache re-ranked results
             st.session_state.results_cache['reranked'] = results_reranked
 
+        # Normalize re-ranked scores to 0-1 range for easy comparison
+        def normalize_scores(results_list):
+            """Normalize similarity scores to 0-1 range using min-max normalization"""
+            if not results_list:
+                return results_list
+
+            # Get all scores
+            scores = [r['similarity_score'] for r in results_list]
+            min_score = min(scores)
+            max_score = max(scores)
+
+            # Avoid division by zero
+            if max_score == min_score:
+                for r in results_list:
+                    r['normalized_score'] = 1.0
+                return results_list
+
+            # Min-max normalization
+            for r in results_list:
+                normalized = (r['similarity_score'] - min_score) / (max_score - min_score)
+                r['normalized_score'] = normalized
+
+            return results_list
+
         # Get appropriate results based on toggle (instant switch!)
         if use_reranking:
             results = st.session_state.results_cache.get('reranked', [])
+            # Normalize re-ranked scores for display
+            results = normalize_scores(results)
             if not query_changed and has_cached_results:
                 st.success("⚡ Switched to re-ranked results instantly (no recomputation needed!)")
         else:
@@ -309,18 +335,14 @@ def main():
         reranked_badge = " 🔄" if use_reranking else ""
         st.markdown(f"### 📄 Retrieved Documents{reranked_badge}")
         if use_reranking:
-            st.info("✨ Results have been re-ranked using a cross-encoder model for improved relevance")
+            st.info("✨ Results re-ranked using cross-encoder (scores normalized to 0-1 for comparison)")
 
         for i, result in enumerate(results, 1):
-            # Show scores with proper labels for re-ranked vs non-reranked
-            if result.get('reranked'):
-                # Re-ranked: show cross-encoder score and original cosine similarity
-                score_info = f"Re-rank Score: {result['similarity_score']:.3f}"
-                if 'cosine_similarity' in result:
-                    score_info += f" | Cosine: {result['cosine_similarity']:.3f}"
+            # Show normalized scores when re-ranking is ON, otherwise show cosine similarity
+            if use_reranking and 'normalized_score' in result:
+                score_info = f"Score: {result['normalized_score']:.3f}"
             else:
-                # Not re-ranked: just show cosine similarity
-                score_info = f"Cosine Similarity: {result['similarity_score']:.3f}"
+                score_info = f"Score: {result.get('similarity_score', 0):.3f}"
 
             with st.expander(
                 f"Document {i} - {result['source']} ({score_info})",
@@ -328,13 +350,6 @@ def main():
             ):
                 st.markdown(f"**Content:**")
                 st.markdown(f"```\n{result['text']}\n```")
-
-                # Show score details
-                if result.get('reranked'):
-                    st.markdown("**Scores:**")
-                    st.markdown(f"- 🔄 **Re-rank Score:** {result['similarity_score']:.4f} (cross-encoder)")
-                    if 'cosine_similarity' in result:
-                        st.markdown(f"- 📊 **Cosine Similarity:** {result['cosine_similarity']:.4f} (bi-encoder)")
 
                 if result['metadata']:
                     st.markdown("**Metadata:**")
