@@ -160,7 +160,19 @@ def main():
 
     # Advanced settings
     with st.sidebar.expander("Advanced Settings"):
-        top_k = st.slider("Top K Results", 1, 10, TOP_K_RESULTS)
+        pool_size = st.slider(
+            "Retrieval Pool Size",
+            10, 100,
+            RETRIEVAL_POOL_SIZE,
+            step=10,
+            help="Number of documents to retrieve before ranking (larger = better re-ranking, slower)"
+        )
+        top_k = st.slider(
+            "Top K for LLM",
+            1, 20,
+            TOP_K_RESULTS,
+            help="Number of top-ranked documents to show and use for answer generation"
+        )
         similarity_threshold = st.slider("Similarity Threshold", 0.0, 1.0, SIMILARITY_THRESHOLD, 0.05)
         temperature = st.slider("LLM Temperature", 0.0, 1.0, LLM_TEMPERATURE, 0.1)
 
@@ -245,7 +257,7 @@ def main():
         search_and_answer = st.button("🤖 Search & Answer", type="primary", use_container_width=True)
 
     # Check if we should show results (button clicked OR just toggling with existing results)
-    cache_key = f"{query}|{top_k}|{similarity_threshold}"
+    cache_key = f"{query}|{pool_size}|{similarity_threshold}"
     has_cached_results = (
         st.session_state.current_query == cache_key and
         st.session_state.results_cache
@@ -263,33 +275,33 @@ def main():
             st.session_state.current_query = cache_key
             st.session_state.results_cache = {}  # Clear old results
 
-            # Retrieve documents (without re-ranking first)
-            with st.spinner("Searching for relevant documents..."):
-                results_original = retriever.search(
+            # Retrieve initial pool of documents (without re-ranking)
+            with st.spinner(f"Retrieving pool of {pool_size} documents..."):
+                pool_original = retriever.search(
                     query,
-                    top_k=top_k,
+                    top_k=pool_size,
                     use_reranking=False,
                     min_similarity=similarity_threshold
                 )
 
-            if not results_original:
+            if not pool_original:
                 st.warning("No relevant documents found. Try lowering the similarity threshold.")
                 return
 
-            # Cache original results
-            st.session_state.results_cache['original'] = results_original
+            # Cache full original pool
+            st.session_state.results_cache['original_pool'] = pool_original
 
-            # Compute re-ranked results if toggle is on OR pre-compute for instant switching
-            with st.spinner("Computing re-ranked results..."):
-                results_reranked = retriever.search(
+            # Compute re-ranked pool for instant switching
+            with st.spinner(f"Re-ranking {len(pool_original)} documents..."):
+                pool_reranked = retriever.search(
                     query,
-                    top_k=top_k,
+                    top_k=pool_size,
                     use_reranking=True,
                     min_similarity=similarity_threshold
                 )
 
-            # Cache re-ranked results
-            st.session_state.results_cache['reranked'] = results_reranked
+            # Cache full re-ranked pool
+            st.session_state.results_cache['reranked_pool'] = pool_reranked
 
         # Normalize re-ranked scores to 0-1 range for easy comparison
         def normalize_scores(results_list):
@@ -315,17 +327,20 @@ def main():
 
             return results_list
 
-        # Get appropriate results based on toggle (instant switch!)
+        # Get appropriate pool based on toggle, then slice to top_k
         if use_reranking:
-            results = st.session_state.results_cache.get('reranked', [])
+            pool = st.session_state.results_cache.get('reranked_pool', [])
             # Normalize re-ranked scores for display
-            results = normalize_scores(results)
+            pool = normalize_scores(pool)
             if not query_changed and has_cached_results:
                 st.success("⚡ Switched to re-ranked results instantly (no recomputation needed!)")
         else:
-            results = st.session_state.results_cache.get('original', [])
+            pool = st.session_state.results_cache.get('original_pool', [])
             if not query_changed and has_cached_results:
                 st.success("⚡ Switched to original results instantly (no recomputation needed!)")
+
+        # Slice pool to top_k for display and LLM use
+        results = pool[:top_k] if pool else []
 
         if not results:
             st.warning("No relevant documents found. Try lowering the similarity threshold.")
@@ -333,9 +348,17 @@ def main():
 
         # Display results
         reranked_badge = " 🔄" if use_reranking else ""
-        st.markdown(f"### 📄 Retrieved Documents{reranked_badge}")
+        st.markdown(f"### 📄 Top {len(results)} Documents{reranked_badge}")
+
+        # Show pool info
+        pool_info = f"Retrieved {len(pool)} documents from pool"
         if use_reranking:
-            st.info("✨ Results re-ranked using cross-encoder (scores normalized to 0-1 for comparison)")
+            pool_info += " → Re-ranked with cross-encoder"
+        pool_info += f" → Showing top {len(results)} for LLM"
+        st.caption(pool_info)
+
+        if use_reranking:
+            st.info("✨ Scores normalized to 0-1 for easy comparison")
 
         for i, result in enumerate(results, 1):
             # Show normalized scores when re-ranking is ON, otherwise show cosine similarity
@@ -360,12 +383,16 @@ def main():
             st.markdown("---")
             st.markdown("### 🤖 AI-Generated Answer")
 
-            # Get context
-            context = retriever.get_context_for_query(
-                query,
-                top_k=top_k,
-                min_similarity=similarity_threshold
-            )
+            # Build context from the top_k results we're displaying
+            context_parts = []
+            for i, result in enumerate(results, 1):
+                score = result.get('normalized_score', result.get('similarity_score', 0))
+                context_parts.append(f"[Document {i}] (Score: {score:.3f})")
+                context_parts.append(f"Source: {result['source']}")
+                context_parts.append(f"Content: {result['text']}")
+                context_parts.append("")
+
+            context = "\n".join(context_parts)
 
             # Generate answer
             with st.spinner("Generating answer with LLM..."):

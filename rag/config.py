@@ -30,7 +30,8 @@ LLM_MAX_TOKENS = 512
 LLM_CONTEXT_WINDOW = 4096
 
 # Retrieval configuration
-TOP_K_RESULTS = 5
+RETRIEVAL_POOL_SIZE = 50  # Number of documents to retrieve initially (before ranking)
+TOP_K_RESULTS = 5  # Number of top documents to show and use for LLM
 SIMILARITY_THRESHOLD = 0.7
 
 # Re-ranking configuration
