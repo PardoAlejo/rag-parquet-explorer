@@ -324,7 +324,7 @@ def main():
 
             with st.expander(
                 f"Document {i} - {result['source']} ({score_info})",
-                expanded=(i == 1)
+                expanded=False
             ):
                 st.markdown(f"**Content:**")
                 st.markdown(f"```\n{result['text']}\n```")
